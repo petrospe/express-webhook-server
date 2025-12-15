@@ -27,13 +27,13 @@ app.post('/webhook', (req, res) => {
         jsonResponse = {
             TYPE: "S",
             MESSAGE: "SUCCESS: The work order event was processed correctly.",
-            MESSAGE_DET: `Received event_id: ${req.body.event_id || 'N/A'}`
+            MESSAGE_DET: `Received id: ${req.body.event_id || 'N/A'}`
         };
     } else if (responseType === 'e') {
         jsonResponse = {
             TYPE: "E",
             MESSAGE: "ERROR: A required field was missing or invalid.",
-            MESSAGE_DET: `Received payload for workorder_id: ${req.body.workorder_id || 'N/A'}`
+            MESSAGE_DET: `Received payload for id: ${req.body.workorder_id || 'N/A'}`
         };
     }
 
