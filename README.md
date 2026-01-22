@@ -7,16 +7,27 @@ The response payload is dynamically determined by a query parameter (`?type=s` o
 ## ✨ Features
 
   * **HTTP 200 Success:** Always returns a `200 OK` status, simulating successful receipt by the endpoint.
-  * **Custom JSON Body:** Returns a structured JSON object:
+  * **Custom JSON Body (SAP OData-style):** Returns an OData-ish response envelope shaped like:
     ```json
     {
-      "TYPE": "S" or "E",
-      "MESSAGE": "...",
-      "MESSAGE_DET": "..."
+      "d": {
+        "__metadata": {
+          "id": "http://localhost:3002/sap/opu/odata/sap/ZLOCAL_SRV/z_conf_creaSet(uuid='...',event_id=...)",
+          "uri": "http://localhost:3002/sap/opu/odata/sap/ZLOCAL_SRV/z_conf_creaSet(uuid='...',event_id=...)",
+          "type": "ZLOCAL_SRV.z_conf_crea"
+        },
+        "uuid": "...",
+        "event_id": 3,
+        "type": "S" or "E",
+        "detail_message": "..."
+      }
     }
     ```
+    Notes:
+    - The server **echoes back** the incoming JSON body fields under `d` and adds standard fields like `uuid`, `event_id`, `type`, `detail_message`.
+    - If the request body does not include `uuid`, the server generates one automatically.
   * **Single Endpoint:** Uses one clean endpoint (`/webhook`) controlled by a query parameter.
-  * **Debugging:** Logs the incoming request body and the exact outgoing JSON response to the console.
+  * **Debugging + Monitor:** Logs the incoming request body and outgoing JSON response to the console, and exposes a simple HTML dashboard at `/monitor`.
   * **Port:** Runs on `http://localhost:3002`.
 
 ## 🛠️ Setup and Installation
@@ -56,15 +67,14 @@ The console will confirm the server is running:
 
 ```
 Webhook server listening on http://localhost:3002
-Test URL (Success): http://localhost:3002/webhook?type=s
-Test URL (Error): http://localhost:3002/webhook?type=e
+Monitoring URL: http://localhost:3002/monitor
 ```
 
 ## 🧪 How to Test the Endpoint
 
 Since the server requires a **POST** request with a JSON body, you must use a client like **cURL**, **Postman**, or **Insomnia** to test it.
 
-### 1\. Test SUCCESS Response (`TYPE:S`)
+### 1\. Test SUCCESS Response (`d.type: "S"`)
 
 This command simulates a webhook sender hitting your server and expecting a success payload.
 
@@ -75,20 +85,26 @@ curl -i -X POST \
   http://localhost:3002/webhook?type=s
 ```
 
-**Expected Console Output (server terminal):**
+**Expected response shape:**
 
-```
-----------------------------------------------------
-Incoming Payload: { event_id: 100, user_id: 5 }
-Outgoing Response (Status 200): {
-  TYPE: 'S',
-  MESSAGE: 'SUCCESS: The work order event was processed correctly.',
-  MESSAGE_DET: 'Received event_id: 100'
+```json
+{
+  "d": {
+    "__metadata": {
+      "id": "http://localhost:3002/sap/opu/odata/sap/ZLOCAL_SRV/z_conf_creaSet(uuid='...',event_id=100)",
+      "uri": "http://localhost:3002/sap/opu/odata/sap/ZLOCAL_SRV/z_conf_creaSet(uuid='...',event_id=100)",
+      "type": "ZLOCAL_SRV.z_conf_crea"
+    },
+    "event_id": 100,
+    "user_id": 5,
+    "type": "S",
+    "detail_message": "S: Operation was processed correctly. Received event_id: 100",
+    "uuid": "..."
+  }
 }
-----------------------------------------------------
 ```
 
-### 2\. Test ERROR Response (`TYPE:E`)
+### 2\. Test ERROR Response (`d.type: "E"`)
 
 This command simulates the error path by using the appropriate query parameter.
 
@@ -99,18 +115,34 @@ curl -i -X POST \
   http://localhost:3002/webhook?type=e
 ```
 
-**Expected Console Output (server terminal):**
+**Expected response shape:**
 
-```
-----------------------------------------------------
-Incoming Payload: { workorder_id: '7', rework_time: 3551906 }
-Outgoing Response (Status 200): {
-  TYPE: 'E',
-  MESSAGE: 'ERROR: A required field was missing or invalid.',
-  MESSAGE_DET: 'Received payload for workorder_id: 7'
+```json
+{
+  "d": {
+    "__metadata": {
+      "id": "http://localhost:3002/sap/opu/odata/sap/ZLOCAL_SRV/z_conf_creaSet(uuid='...',event_id=0)",
+      "uri": "http://localhost:3002/sap/opu/odata/sap/ZLOCAL_SRV/z_conf_creaSet(uuid='...',event_id=0)",
+      "type": "ZLOCAL_SRV.z_conf_crea"
+    },
+    "workorder_id": "7",
+    "rework_time": 3551906,
+    "type": "E",
+    "detail_message": "E RU 024 Preceding operation 0010 of sequence 0 not yet confirmed. Received payload for workorder_id: 7",
+    "uuid": "...",
+    "event_id": 0
+  }
 }
-----------------------------------------------------
 ```
+
+## ⚙️ Configuration (Environment Variables)
+
+You can customize the values used to build `d.__metadata` without changing code:
+
+- `ODATA_BASE_URL` (default: `http://localhost:3002`)
+- `ODATA_SERVICE_PATH` (default: `/sap/opu/odata/sap/ZLOCAL_SRV`)
+- `ODATA_ENTITY_SET` (default: `z_conf_creaSet`)
+- `ODATA_ENTITY_TYPE` (default: `ZLOCAL_SRV.z_conf_crea`)
 
 ## 💻 `server.js` Summary
 
@@ -119,7 +151,7 @@ The core logic for handling the request and generating the response is in the `a
 ```javascript
 // Example logic in server.js
 app.post('/webhook', (req, res) => {
-    // Determine JSON payload based on req.query.type
+    // Determine OData-ish JSON payload based on req.query.type
     // ...
     // Log incoming and outgoing data
     console.log('Incoming Payload:', req.body);

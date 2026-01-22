@@ -1,6 +1,69 @@
 const express = require('express');
 const app = express();
 const port = 3002;
+const { randomUUID } = require('crypto');
+
+// --- OData response defaults (can be overridden via env) ---
+const ODATA_BASE_URL = process.env.ODATA_BASE_URL || 'http://localhost:3002';
+const ODATA_SERVICE_PATH = process.env.ODATA_SERVICE_PATH || '/sap/opu/odata/sap/ZLOCAL_SRV';
+const ODATA_ENTITY_SET = process.env.ODATA_ENTITY_SET || 'z_conf_creaSet';
+const ODATA_ENTITY_TYPE = process.env.ODATA_ENTITY_TYPE || 'ZLOCAL_SRV.z_conf_crea';
+
+function toIntOrNull(value) {
+    if (value === undefined || value === null || value === '') return null;
+    const n = Number(value);
+    return Number.isFinite(n) ? Math.trunc(n) : null;
+}
+
+function buildODataId(uuid, eventId) {
+    const safeUuid = encodeURIComponent(String(uuid));
+    const safeEventId = encodeURIComponent(String(eventId));
+    return `${ODATA_BASE_URL}${ODATA_SERVICE_PATH}/${ODATA_ENTITY_SET}(uuid='${safeUuid}',event_id=${safeEventId})`;
+}
+
+function buildODataResponse(req) {
+    const responseType = req.query.type;
+
+    // Derive core keys used by the OData key predicate
+    const uuid = req.body?.uuid || randomUUID();
+    const eventId = req.body?.event_id ?? req.body?.eventId ?? null;
+
+    // Preserve original behavior, but map it into the OData-style payload
+    let type = 'U';
+    let detailMessage = "Invalid or missing 'type' parameter. Use ?type=s or ?type=e.";
+    if (responseType === 's') {
+        type = 'S';
+        detailMessage = `S: Operation was processed correctly. Received event_id: ${eventId ?? 'N/A'}`;
+    } else if (responseType === 'e') {
+        type = 'E';
+        detailMessage = req.body?.detail_message
+            || req.body?.DETAIL_MESSAGE
+            || `E RU 024 Preceding operation 0010 of sequence 0 not yet confirmed. Received payload for workorder_id: ${req.body?.workorder_id ?? 'N/A'}`;
+    }
+
+    const id = buildODataId(uuid, eventId ?? '0');
+
+    // Echo back incoming fields, but ensure we always include these standard fields.
+    // This keeps the server flexible while matching the SAP-style response shape.
+    const entity = {
+        ...req.body,
+        uuid,
+        event_id: eventId !== null ? toIntOrNull(eventId) ?? eventId : eventId,
+        type,
+        detail_message: detailMessage,
+    };
+
+    return {
+        d: {
+            __metadata: {
+                id,
+                uri: id,
+                type: ODATA_ENTITY_TYPE,
+            },
+            ...entity,
+        },
+    };
+}
 
 // Variable to store the last incoming payload and the corresponding outgoing response
 let lastWebhookData = {
@@ -15,27 +78,7 @@ app.use(express.urlencoded({ extended: true }));
 
 // --- 1. WEBHOOK ENDPOINT (POST) ---
 app.post('/webhook', (req, res) => {
-    const responseType = req.query.type;
-    
-    let jsonResponse = {
-        TYPE: "U", 
-        MESSAGE: "Invalid or missing 'type' parameter.",
-        MESSAGE_DET: "The webhook response type must be specified with ?type=s or ?type=e."
-    };
-
-    if (responseType === 's') {
-        jsonResponse = {
-            TYPE: "S",
-            MESSAGE: "SUCCESS: The work order event was processed correctly.",
-            MESSAGE_DET: `Received id: ${req.body.event_id || 'N/A'}`
-        };
-    } else if (responseType === 'e') {
-        jsonResponse = {
-            TYPE: "E",
-            MESSAGE: "ERROR: A required field was missing or invalid.",
-            MESSAGE_DET: `Received payload for id: ${req.body.workorder_id || 'N/A'}`
-        };
-    }
+    const jsonResponse = buildODataResponse(req);
 
     // --- CRITICAL CHANGE: Update the global state variable ---
     lastWebhookData.incoming = req.body;
